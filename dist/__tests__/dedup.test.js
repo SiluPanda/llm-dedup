@@ -197,6 +197,41 @@ const types_1 = require("../types");
             await dedup.close();
         });
     });
+    (0, vitest_1.describe)('AbortSignal', () => {
+        (0, vitest_1.it)('rejects immediately if signal is already aborted before execute()', async () => {
+            const dedup = (0, dedup_1.createDedup)();
+            const controller = new AbortController();
+            controller.abort(new Error('pre-aborted'));
+            await (0, vitest_1.expect)(dedup.execute('abort-pre', () => Promise.resolve(1), { signal: controller.signal })).rejects.toThrow('pre-aborted');
+            await dedup.close();
+        });
+        (0, vitest_1.it)('rejects a waiting subscriber when the signal fires during wait', async () => {
+            const dedup = (0, dedup_1.createDedup)({ maxWaitMs: 0 }); // disable timeout so only abort fires
+            const controller = new AbortController();
+            let resolveOwner;
+            const fn = () => new Promise(resolve => { resolveOwner = resolve; });
+            dedup.execute('abort-sub', fn); // owner — hangs
+            const subP = dedup.execute('abort-sub', fn, { signal: controller.signal }); // subscriber
+            controller.abort();
+            const result = await Promise.allSettled([subP]);
+            (0, vitest_1.expect)(result[0].status).toBe('rejected');
+            resolveOwner(0);
+            await dedup.close();
+        });
+        (0, vitest_1.it)('does not reject subscriber if signal fires after owner resolves', async () => {
+            const dedup = (0, dedup_1.createDedup)({ maxWaitMs: 0 });
+            const controller = new AbortController();
+            const [r1, r2] = await Promise.all([
+                dedup.execute('abort-done', () => new Promise(res => setTimeout(() => res(99), 20))),
+                dedup.execute('abort-done', () => Promise.resolve(99), { signal: controller.signal }),
+            ]);
+            // Abort after both have resolved — should not throw
+            controller.abort();
+            (0, vitest_1.expect)(r1).toBe(99);
+            (0, vitest_1.expect)(r2).toBe(99);
+            await dedup.close();
+        });
+    });
     (0, vitest_1.describe)('resetStats', () => {
         (0, vitest_1.it)('resets all counters to zero', async () => {
             const dedup = (0, dedup_1.createDedup)();

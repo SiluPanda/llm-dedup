@@ -5,6 +5,7 @@ export interface InflightEntry<T> {
         resolve: (v: T) => void;
         reject: (e: unknown) => void;
         timeoutTimer?: ReturnType<typeof setTimeout>;
+        abortCleanup?: () => void;
     }>;
     createdAt: number;
     settled: boolean;
