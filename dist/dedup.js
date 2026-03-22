@@ -30,6 +30,7 @@ function createDedup(options) {
                 const err = new types_1.DedupCancelError(entry.key);
                 for (const sub of entry.subscribers) {
                     clearTimeout(sub.timeoutTimer);
+                    sub.abortCleanup?.();
                     sub.reject(err);
                 }
                 entry.settled = true;
@@ -45,6 +46,10 @@ function createDedup(options) {
         rawStats.total++;
         if (closed) {
             return Promise.reject(new Error('LLMDedup is closed'));
+        }
+        const signal = executeOptions?.signal;
+        if (signal?.aborted) {
+            return Promise.reject(signal.reason ?? new DOMException('AbortError', 'AbortError'));
         }
         const existing = registry.get(key);
         if (existing && !existing.settled) {
@@ -71,6 +76,7 @@ function createDedup(options) {
                         rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
                         for (const sub of overflowEntry.subscribers) {
                             clearTimeout(sub.timeoutTimer);
+                            sub.abortCleanup?.();
                             try {
                                 sub.resolve(structuredClone(result));
                             }
@@ -87,6 +93,7 @@ function createDedup(options) {
                         rawStats.errors++;
                         for (const sub of overflowEntry.subscribers) {
                             clearTimeout(sub.timeoutTimer);
+                            sub.abortCleanup?.();
                             sub.reject(err);
                         }
                         throw err;
@@ -98,18 +105,31 @@ function createDedup(options) {
             rawStats.coalesced++;
             return new Promise((resolve, reject) => {
                 const maxWait = executeOptions?.maxWaitMs ?? opts.maxWaitMs;
-                let timeoutTimer;
                 const subscriber = {
                     resolve,
                     reject,
                     timeoutTimer: undefined,
+                    abortCleanup: undefined,
                 };
+                const removeFromQueue = () => {
+                    const idx = existing.subscribers.indexOf(subscriber);
+                    if (idx !== -1) {
+                        existing.subscribers.splice(idx, 1);
+                    }
+                };
+                if (signal) {
+                    const onAbort = () => {
+                        removeFromQueue();
+                        clearTimeout(subscriber.timeoutTimer);
+                        reject(signal.reason ?? new DOMException('AbortError', 'AbortError'));
+                    };
+                    signal.addEventListener('abort', onAbort, { once: true });
+                    subscriber.abortCleanup = () => signal.removeEventListener('abort', onAbort);
+                }
                 if (maxWait > 0) {
-                    timeoutTimer = setTimeout(() => {
-                        const idx = existing.subscribers.indexOf(subscriber);
-                        if (idx !== -1) {
-                            existing.subscribers.splice(idx, 1);
-                        }
+                    subscriber.timeoutTimer = setTimeout(() => {
+                        removeFromQueue();
+                        subscriber.abortCleanup?.();
                         rawStats.timeouts++;
                         if (opts.timeoutBehavior === 'fallthrough') {
                             fn().then(resolve, reject);
@@ -118,7 +138,6 @@ function createDedup(options) {
                             reject(new types_1.DedupTimeoutError(key, maxWait));
                         }
                     }, maxWait);
-                    subscriber.timeoutTimer = timeoutTimer;
                 }
                 existing.subscribers.push(subscriber);
             });
@@ -143,6 +162,7 @@ function createDedup(options) {
                 rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
                 for (const sub of entry.subscribers) {
                     clearTimeout(sub.timeoutTimer);
+                    sub.abortCleanup?.();
                     try {
                         sub.resolve(structuredClone(result));
                     }
@@ -159,6 +179,7 @@ function createDedup(options) {
                 rawStats.errors++;
                 for (const sub of entry.subscribers) {
                     clearTimeout(sub.timeoutTimer);
+                    sub.abortCleanup?.();
                     sub.reject(err);
                 }
                 throw err;
@@ -203,6 +224,7 @@ function createDedup(options) {
         const err = new types_1.DedupCancelError(key);
         for (const sub of entry.subscribers) {
             clearTimeout(sub.timeoutTimer);
+            sub.abortCleanup?.();
             sub.reject(err);
         }
         entry.settled = true;
