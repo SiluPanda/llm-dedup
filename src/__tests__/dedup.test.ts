@@ -249,6 +249,56 @@ describe('createDedup', () => {
     })
   })
 
+  describe('AbortSignal', () => {
+    it('rejects immediately if signal is already aborted before execute()', async () => {
+      const dedup = createDedup()
+      const controller = new AbortController()
+      controller.abort(new Error('pre-aborted'))
+
+      await expect(
+        dedup.execute('abort-pre', () => Promise.resolve(1), { signal: controller.signal }),
+      ).rejects.toThrow('pre-aborted')
+
+      await dedup.close()
+    })
+
+    it('rejects a waiting subscriber when the signal fires during wait', async () => {
+      const dedup = createDedup({ maxWaitMs: 0 }) // disable timeout so only abort fires
+      const controller = new AbortController()
+      let resolveOwner!: (v: number) => void
+      const fn = () => new Promise<number>(resolve => { resolveOwner = resolve })
+
+      dedup.execute('abort-sub', fn) // owner — hangs
+      const subP = dedup.execute('abort-sub', fn, { signal: controller.signal }) // subscriber
+
+      controller.abort()
+
+      const result = await Promise.allSettled([subP])
+      expect(result[0].status).toBe('rejected')
+
+      resolveOwner(0)
+      await dedup.close()
+    })
+
+    it('does not reject subscriber if signal fires after owner resolves', async () => {
+      const dedup = createDedup({ maxWaitMs: 0 })
+      const controller = new AbortController()
+
+      const [r1, r2] = await Promise.all([
+        dedup.execute('abort-done', () => new Promise<number>(res => setTimeout(() => res(99), 20))),
+        dedup.execute('abort-done', () => Promise.resolve(99), { signal: controller.signal }),
+      ])
+
+      // Abort after both have resolved — should not throw
+      controller.abort()
+
+      expect(r1).toBe(99)
+      expect(r2).toBe(99)
+
+      await dedup.close()
+    })
+  })
+
   describe('resetStats', () => {
     it('resets all counters to zero', async () => {
       const dedup = createDedup()
