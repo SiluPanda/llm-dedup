@@ -3,6 +3,7 @@
 Coalesce identical in-flight LLM requests into a single upstream call.
 
 [![npm version](https://img.shields.io/npm/v/llm-dedup.svg)](https://www.npmjs.com/package/llm-dedup)
+[![npm downloads](https://img.shields.io/npm/dt/llm-dedup.svg)](https://www.npmjs.com/package/llm-dedup)
 [![license](https://img.shields.io/npm/l/llm-dedup.svg)](https://github.com/SiluPanda/llm-dedup/blob/master/LICENSE)
 [![node](https://img.shields.io/node/v/llm-dedup.svg)](https://nodejs.org)
 
