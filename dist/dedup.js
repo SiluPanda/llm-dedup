@@ -27,13 +27,15 @@ function createDedup(options) {
         const now = Date.now();
         for (const entry of registry.all()) {
             if (!entry.settled && now - entry.createdAt > opts.abandonTimeoutMs) {
+                entry.settled = true;
                 const err = new types_1.DedupCancelError(entry.key);
-                for (const sub of entry.subscribers) {
+                const subs = [...entry.subscribers];
+                entry.subscribers.length = 0;
+                for (const sub of subs) {
                     clearTimeout(sub.timeoutTimer);
                     sub.abortCleanup?.();
                     sub.reject(err);
                 }
-                entry.settled = true;
                 registry.delete(entry.key);
                 rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
             }
@@ -71,10 +73,14 @@ function createDedup(options) {
                 const overflowPromise = (async () => {
                     try {
                         const result = await fn();
-                        overflowEntry.settled = true;
-                        registry.delete(overflowKey);
-                        rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
-                        for (const sub of overflowEntry.subscribers) {
+                        if (!overflowEntry.settled) {
+                            overflowEntry.settled = true;
+                            registry.delete(overflowKey);
+                            rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
+                        }
+                        const subs = [...overflowEntry.subscribers];
+                        overflowEntry.subscribers.length = 0;
+                        for (const sub of subs) {
                             clearTimeout(sub.timeoutTimer);
                             sub.abortCleanup?.();
                             try {
@@ -87,11 +93,15 @@ function createDedup(options) {
                         return result;
                     }
                     catch (err) {
-                        overflowEntry.settled = true;
-                        registry.delete(overflowKey);
-                        rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
-                        rawStats.errors++;
-                        for (const sub of overflowEntry.subscribers) {
+                        if (!overflowEntry.settled) {
+                            overflowEntry.settled = true;
+                            registry.delete(overflowKey);
+                            rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
+                            rawStats.errors++;
+                        }
+                        const subs = [...overflowEntry.subscribers];
+                        overflowEntry.subscribers.length = 0;
+                        for (const sub of subs) {
                             clearTimeout(sub.timeoutTimer);
                             sub.abortCleanup?.();
                             sub.reject(err);
@@ -157,10 +167,14 @@ function createDedup(options) {
         const ownerPromise = (async () => {
             try {
                 const result = await fn();
-                entry.settled = true;
-                registry.delete(key);
-                rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
-                for (const sub of entry.subscribers) {
+                if (!entry.settled) {
+                    entry.settled = true;
+                    registry.delete(key);
+                    rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
+                }
+                const subs = [...entry.subscribers];
+                entry.subscribers.length = 0;
+                for (const sub of subs) {
                     clearTimeout(sub.timeoutTimer);
                     sub.abortCleanup?.();
                     try {
@@ -173,11 +187,15 @@ function createDedup(options) {
                 return result;
             }
             catch (err) {
-                entry.settled = true;
-                registry.delete(key);
-                rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
-                rawStats.errors++;
-                for (const sub of entry.subscribers) {
+                if (!entry.settled) {
+                    entry.settled = true;
+                    registry.delete(key);
+                    rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
+                    rawStats.errors++;
+                }
+                const subs = [...entry.subscribers];
+                entry.subscribers.length = 0;
+                for (const sub of subs) {
                     clearTimeout(sub.timeoutTimer);
                     sub.abortCleanup?.();
                     sub.reject(err);
@@ -219,15 +237,17 @@ function createDedup(options) {
     }
     function cancelInflight(key) {
         const entry = registry.get(key);
-        if (!entry)
+        if (!entry || entry.settled)
             return;
+        entry.settled = true;
         const err = new types_1.DedupCancelError(key);
-        for (const sub of entry.subscribers) {
+        const subs = [...entry.subscribers];
+        entry.subscribers.length = 0;
+        for (const sub of subs) {
             clearTimeout(sub.timeoutTimer);
             sub.abortCleanup?.();
             sub.reject(err);
         }
-        entry.settled = true;
         registry.delete(key);
         rawStats.currentInflight = Math.max(0, rawStats.currentInflight - 1);
     }

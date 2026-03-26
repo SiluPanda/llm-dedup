@@ -1,6 +1,6 @@
 {
   "name": "llm-dedup",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Coalesce semantically similar in-flight LLM requests",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
