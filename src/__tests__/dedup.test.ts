@@ -317,4 +317,69 @@ describe('createDedup', () => {
       await dedup.close()
     })
   })
+
+  describe('race condition: concurrent timeout + resolution', () => {
+    it('resolves all subscribers even when a timeout fires during owner settlement', async () => {
+      // Use fallthrough so timeout triggers removeFromQueue (splice) on the
+      // live subscribers array. Before the fix, for...of iteration over the
+      // same array would skip adjacent subscribers, leaving their promises
+      // hanging forever.
+      const dedup = createDedup({ maxWaitMs: 30, timeoutBehavior: 'fallthrough' })
+      let resolveOwner!: (v: string) => void
+
+      // Owner hangs until we resolve manually
+      const ownerFn = () => new Promise<string>(resolve => { resolveOwner = resolve })
+      // Fallthrough fn returns immediately
+      const fallthroughFn = () => Promise.resolve('fallthrough')
+
+      const ownerP = dedup.execute('race', ownerFn)
+
+      // Create 5 subscribers — enough that a splice-during-iteration would
+      // skip at least one
+      const subPromises = Array.from({ length: 5 }, () =>
+        dedup.execute('race', fallthroughFn),
+      )
+
+      // Wait long enough for all subscriber timeouts to fire
+      await new Promise(r => setTimeout(r, 80))
+
+      // Now resolve the owner — remaining subscribers (if any) should also resolve
+      resolveOwner('owner-done')
+
+      // All 6 promises must settle within a bounded time. If any subscriber
+      // was skipped, its promise would hang and this would timeout.
+      const results = await Promise.allSettled([ownerP, ...subPromises])
+
+      for (const result of results) {
+        expect(result.status).toBe('fulfilled')
+      }
+
+      expect(dedup.stats().currentInflight).toBe(0)
+      await dedup.close()
+    })
+
+    it('does not double-decrement currentInflight when cancelInflight races with owner settlement', async () => {
+      const dedup = createDedup()
+      let resolveOwner!: (v: string) => void
+      const fn = () => new Promise<string>(resolve => { resolveOwner = resolve })
+
+      const ownerP = dedup.execute('dd', fn)
+      const subP = dedup.execute('dd', fn) // subscriber
+
+      // Cancel before owner settles — decrements currentInflight once
+      dedup.cancelInflight('dd')
+
+      // Now resolve the owner — should NOT decrement again
+      resolveOwner('late')
+      await Promise.allSettled([ownerP, subP])
+
+      // Wait a tick for any async settlement
+      await new Promise(r => setTimeout(r, 10))
+
+      const s = dedup.stats()
+      expect(s.currentInflight).toBe(0)
+
+      await dedup.close()
+    })
+  })
 })
